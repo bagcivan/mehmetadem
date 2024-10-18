@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL'den Resim Alan Yılan Oyunu</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        #scoreBoard {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="scoreBoard">
+        <div>Skor: <span id="score">0</span></div>
+        <div id="shieldTimer" style="display: none;">Kalkan: <span id="shieldTime">0</span>s</div>
+        <div id="speedTimer" style="display: none;">Hız: <span id="speedTime">0</span>s</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const gridSize = 20;
+        let snake = [{x: 0, y: 0}];
+        let targetX = 0;
+        let targetY = 0;
+        let foods = [];
+        let obstacles = [];
+        let score = 0;
+        let cameraOffset = {x: 0, y: 0};
+        let gameOver = false;
+        let speed = 5;
+        let shieldActive = false;
+        let shieldTimer = 0;
+        let speedTimer = 0;
+        let snakeColor = 'green';
+
+        const foodTypes = [
+            {type: 'normal', color: 'red', size: 15, score: 10, effect: null, icon: '🍎'},
+            {type: 'rocket', color: 'orange', size: 20, score: 20, effect: 'speed', icon: '🚀'},
+            {type: 'rope', color: 'brown', size: 20, score: 15, effect: 'grow', icon: '🧵'},
+            {type: 'shield', color: 'blue', size: 20, score: 25, effect: 'shield', icon: '🛡️'}
+        ];
+
+        const bonusFoods = [];
+        const bonusFoodSize = 80;
+
+        // Bonus yiyecek resimlerini yükle
+        function loadBonusFoodImages() {
+            const imagePaths = [
+                'https://i.ibb.co/86h5cjs/0wEvtTL.png',
+                'https://i.ibb.co/z5HYvww/xs2IWss.png',
+                'https://i.ibb.co/z5HYvww/xs2IWss.png'
+            ];
+            imagePaths.forEach(path => {
+                const img = new Image();
+                img.src = path;
+                img.onload = () => {
+                    bonusFoods.push({
+                        img: img,
+                        size: bonusFoodSize,
+                        score: 50,
+                        effect: 'bonus'
+                    });
+                };
+            });
+        }
+
+        loadBonusFoodImages();
+
+        const maxFoods = 100; // Maksimum yemek sayısını artırdık
+        const foodCreationProbability = 0.10; // Yemek oluşturma olasılığını artırdık
+
+        function createFood(forceBonus = false) {
+            if (foods.length >= maxFoods) return;
+
+            if ((forceBonus || Math.random() < 0.1) && bonusFoods.length > 0) {
+                const bonusType = bonusFoods[Math.floor(Math.random() * bonusFoods.length)];
+                const food = {
+                    x: Math.floor(Math.random() * (canvas.width + 2000) - 1000) - cameraOffset.x,
+                    y: Math.floor(Math.random() * (canvas.height + 2000) - 1000) - cameraOffset.y,
+                    ...bonusType
+                };
+                foods.push(food);
+            } else {
+                const type = foodTypes[Math.floor(Math.random() * foodTypes.length)];
+                const food = {
+                    x: Math.floor(Math.random() * (canvas.width + 2000) - 1000) - cameraOffset.x,
+                    y: Math.floor(Math.random() * (canvas.height + 2000) - 1000) - cameraOffset.y,
+                    ...type
+                };
+                foods.push(food);
+            }
+        }
+
+        function createObstacle() {
+            const obstacle = {
+                x: Math.floor(Math.random() * 100) * gridSize - cameraOffset.x,
+                y: Math.floor(Math.random() * 100) * gridSize - cameraOffset.y,
+                width: gridSize * 3,
+                height: gridSize * 3
+            };
+            obstacles.push(obstacle);
+        }
+
+        function drawSnakePart(snakePart, index) {
+            ctx.fillStyle = snakeColor;
+            ctx.beginPath();
+            ctx.arc(
+                snakePart.x - cameraOffset.x + gridSize / 2,
+                snakePart.y - cameraOffset.y + gridSize / 2,
+                gridSize / 2,
+                0,
+                2 * Math.PI
+            );
+            ctx.fill();
+
+            if (index === 0) {
+                const angle = Math.atan2(targetY - snakePart.y, targetX - snakePart.x);
+                const leftEye = {
+                    x: snakePart.x - cameraOffset.x + Math.cos(angle - 0.3) * gridSize / 3 + gridSize / 2,
+                    y: snakePart.y - cameraOffset.y + Math.sin(angle - 0.3) * gridSize / 3 + gridSize / 2
+                };
+                const rightEye = {
+                    x: snakePart.x - cameraOffset.x + Math.cos(angle + 0.3) * gridSize / 3 + gridSize / 2,
+                    y: snakePart.y - cameraOffset.y + Math.sin(angle + 0.3) * gridSize / 3 + gridSize / 2
+                };
+
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(leftEye.x, leftEye.y, gridSize / 6, 0, 2 * Math.PI);
+                ctx.arc(rightEye.x, rightEye.y, gridSize / 6, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(leftEye.x, leftEye.y, gridSize / 10, 0, 2 * Math.PI);
+                ctx.arc(rightEye.x, rightEye.y, gridSize / 10, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+
+        function drawSnake() {
+            snake.forEach(drawSnakePart);
+        }
+
+        function moveSnake() {
+            const head = snake[0];
+            const dx = targetX - head.x;
+            const dy = targetY - head.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > speed) {
+                const newX = head.x + (dx / distance) * speed;
+                const newY = head.y + (dy / distance) * speed;
+                snake.unshift({x: newX, y: newY});
+            } else {
+                snake.unshift({x: targetX, y: targetY});
+            }
+
+            let foodEaten = false;
+            foods = foods.filter(food => {
+                const dx = snake[0].x - food.x;
+                const dy = snake[0].y - food.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < (gridSize + food.size) / 2) {
+                    score += food.score;
+                    foodEaten = true;
+                    if (food.effect === 'grow' || food.effect === 'bonus') {
+                        snake.push({...snake[snake.length - 1]});
+                    }
+                    if (food.effect === 'speed' || food.effect === 'bonus') {
+                        speed = 10;
+                        speedTimer = 300;
+                        snakeColor = 'orange';
+                    }
+                    if (food.effect === 'shield' || food.effect === 'bonus') {
+                        shieldActive = true;
+                        shieldTimer = 300;
+                        snakeColor = 'cyan';
+                    }
+                    createFood();
+                    return false;
+                }
+                return true;
+            });
+
+            if (!foodEaten) {
+                snake.pop();
+            }
+
+            if (!shieldActive) {
+                obstacles.forEach(obstacle => {
+                    if (
+                        snake[0].x < obstacle.x + obstacle.width &&
+                        snake[0].x + gridSize > obstacle.x &&
+                        snake[0].y < obstacle.y + obstacle.height &&
+                        snake[0].y + gridSize > obstacle.y
+                    ) {
+                        gameOver = true;
+                    }
+                });
+            } else {
+                shieldTimer--;
+                if (shieldTimer <= 0) {
+                    shieldActive = false;
+                    if (speedTimer <= 0) snakeColor = 'green';
+                }
+            }
+
+            if (speedTimer > 0) {
+                speedTimer--;
+                if (speedTimer <= 0) {
+                    speed = 5;
+                    if (!shieldActive) snakeColor = 'green';
+                }
+            }
+
+            cameraOffset.x = snake[0].x - canvas.width / 2;
+            cameraOffset.y = snake[0].y - canvas.height / 2;
+        }
+
+        function drawFoods() {
+            foods.forEach(food => {
+                if (food.img) {
+                    ctx.drawImage(food.img, 
+                        food.x - cameraOffset.x - food.size / 2, 
+                        food.y - cameraOffset.y - food.size / 2, 
+                        food.size, food.size);
+                } else {
+                    ctx.fillStyle = food.color;
+                    ctx.beginPath();
+                    ctx.arc(
+                        food.x - cameraOffset.x,
+                        food.y - cameraOffset.y,
+                        food.size / 2,
+                        0,
+                        2 * Math.PI
+                    );
+                    ctx.fill();
+                    ctx.fillStyle = 'white';
+                    ctx.font = `${food.size}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(food.icon, food.x - cameraOffset.x, food.y - cameraOffset.y);
+                }
+            });
+        }
+
+        function drawObstacles() {
+            ctx.fillStyle = 'gray';
+            obstacles.forEach(obstacle => {
+                ctx.fillRect(
+                    obstacle.x - cameraOffset.x,
+                    obstacle.y - cameraOffset.y,
+                    obstacle.width,
+                    obstacle.height
+                );
+            });
+        }
+
+        function updateScoreBoard() {
+            document.getElementById('score').textContent = Math.floor(score);
+            const shieldTimerElement = document.getElementById('shieldTimer');
+            const speedTimerElement = document.getElementById('speedTimer');
+            
+            if (shieldTimer > 0) {
+                shieldTimerElement.style.display = 'block';
+                document.getElementById('shieldTime').textContent = Math.ceil(shieldTimer / 60);
+            } else {
+                shieldTimerElement.style.display = 'none';
+            }
+            
+            if (speedTimer > 0) {
+                speedTimerElement.style.display = 'block';
+                document.getElementById('speedTime').textContent = Math.ceil(speedTimer / 60);
+            } else {
+                speedTimerElement.style.display = 'none';
+            }
+        }
+
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+            for (let x = -cameraOffset.x % gridSize; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = -cameraOffset.y % gridSize; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function gameLoop() {
+            if (gameOver) {
+                ctx.fillStyle = 'black';
+                ctx.font = '40px Arial';
+                ctx.fillText('Oyun Bitti! Skor: ' + Math.floor(score), canvas.width / 2 - 150, canvas.height / 2);
+                return;
+            }
+
+            clearCanvas();
+            drawGrid();
+            drawObstacles();
+            drawFoods();
+            moveSnake();
+            drawSnake();
+            updateScoreBoard();
+
+            // Yemek oluşturma olasılığını artırdık ve maksimum yemek sayısını kontrol ediyoruz
+            if (Math.random() < foodCreationProbability && foods.length < maxFoods) {
+                createFood();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function initializeGame() {
+            // Normal yiyecekleri oluştur
+            for (let i = 0; i < 60; i++) {
+                createFood();
+            }
+
+            // Bonus yiyecekleri oluştur
+            for (let i = 0; i < 10; i++) {
+                createFood(true);
+            }
+        }
+
+        loadBonusFoodImages();
+        initializeGame();
+
+        document.addEventListener('mousemove', (event) => {
+            targetX = event.clientX + cameraOffset.x;
+            targetY = event.clientY + cameraOffset.y;
+        });
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
